@@ -1,18 +1,42 @@
 Configuration
 =============
 
-All configuration can be done by adding configuration files. They are looked for in:
+All configuration can be done by adding configuration files.
 
- * ``/etc/luigi/client.cfg``
- * ``luigi.cfg`` (or its legacy name ``client.cfg``) in your current working directory
- * ``LUIGI_CONFIG_PATH`` environment variable
+Supported config parsers:
 
-in increasing order of preference. The order only matters in case of key conflicts (see docs for ConfigParser.read_). These files are meant for both the client and ``luigid``. If you decide to specify your own configuration you should make sure that both the client and ``luigid`` load it properly.
+* ``cfg`` (default), based on Python's standard ConfigParser_. Values may refer to environment variables using ``${ENVVAR}`` syntax.
+* ``toml``
+
+.. _ConfigParser: https://docs.python.org/3/library/configparser.html
+
+You can choose right parser via ``LUIGI_CONFIG_PARSER`` environment variable. For example, ``LUIGI_CONFIG_PARSER=toml``.
+
+Default (cfg) parser are looked for in:
+
+* ``/etc/luigi/client.cfg`` (deprecated)
+* ``/etc/luigi/luigi.cfg``
+* ``client.cfg`` (deprecated)
+* ``luigi.cfg``
+* ``LUIGI_CONFIG_PATH`` environment variable
+
+`TOML <https://github.com/toml-lang/toml>`_ parser are looked for in:
+
+* ``/etc/luigi/luigi.toml``
+* ``luigi.toml``
+* ``LUIGI_CONFIG_PATH`` environment variable
+
+Both config lists increase in priority (from low to high). The order only
+matters in case of key conflicts (see docs for ConfigParser.read_).
+These files are meant for both the client and ``luigid``.
+If you decide to specify your own configuration you should make sure
+that both the client and ``luigid`` load it properly.
 
 .. _ConfigParser.read: https://docs.python.org/3.6/library/configparser.html#configparser.ConfigParser.read
 
-The config file is broken into sections, each controlling a different part of the config. Example configuration file:
+The config file is broken into sections, each controlling a different part of the config.
 
+Example cfg config:
 
 .. code:: ini
 
@@ -23,6 +47,20 @@ The config file is broken into sections, each controlling a different part of th
     [core]
     scheduler_host=luigi-host.mycompany.foo
 
+Example toml config:
+
+.. code:: python
+
+    [hadoop]
+    version = "cdh4"
+    streaming-jar = "/usr/lib/hadoop-xyz/hadoop-streaming-xyz-123.jar"
+
+    [core]
+    scheduler_host = "luigi-host.mycompany.foo"
+
+Also see `examples/config.toml
+<https://github.com/spotify/luigi/blob/master/examples/config.toml>`_
+for more complex example.
 
 .. _ParamConfigIngestion:
 
@@ -89,6 +127,13 @@ section and the parameters available within it.
 These parameters control core Luigi behavior, such as error e-mails and
 interactions between the worker and scheduler.
 
+autoload-range
+  .. versionadded:: 2.8.4
+
+  If false, prevents range tasks from autoloading. They can still be loaded
+  using ``--module luigi.tools.range``. Defaults to true. Setting this to true
+  explicitly disables the deprecation warning.
+
 default-scheduler-host
   Hostname of the machine running the scheduler. Defaults to localhost.
 
@@ -154,6 +199,7 @@ parallel_scheduling
   If true, the scheduler will compute complete functions of tasks in
   parallel using multiprocessing. This can significantly speed up
   scheduling, but requires that all tasks can be pickled.
+  Defaults to false.
 
 parallel-scheduling-processes
   The number of processes to use for parallel scheduling. If not specified
@@ -172,6 +218,51 @@ rpc-retry-wait
   connect to the central scheduler between two retry attempts.
   Defaults to 30
 
+
+[cors]
+------
+
+.. versionadded:: 2.8.0
+
+These parameters control ``/api/<method>`` ``CORS`` behaviour (see: `W3C Cross-Origin Resource Sharing
+<http://www.w3.org/TR/cors/>`_).
+
+enabled
+  Enables CORS support.
+  Defaults to false.
+
+allowed_origins
+  A list of allowed origins. Used only if ``allow_any_origin`` is false.
+  Configure in JSON array format, e.g. ["foo", "bar"].
+  Defaults to empty.
+
+allow_any_origin
+  Accepts requests from any origin.
+  Defaults to false.
+
+allow_null_origin
+  Allows the request to set ``null`` value of the ``Origin`` header.
+  Defaults to false.
+
+max_age
+  Content of ``Access-Control-Max-Age``.
+  Defaults to 86400 (24 hours).
+
+allowed_methods
+  Content of ``Access-Control-Allow-Methods``.
+  Defaults to ``GET, OPTIONS``.
+
+allowed_headers
+  Content of ``Access-Control-Allow-Headers``.
+  Defaults to ``Accept, Content-Type, Origin``.
+
+exposed_headers
+  Content of ``Access-Control-Expose-Headers``.
+  Defaults to empty string (will NOT be sent as a response header).
+
+allow_credentials
+  Indicates that the actual request can include user credentials.
+  Defaults to false.
 
 .. _worker-config:
 
@@ -224,6 +315,12 @@ wait_jitter
   workers do not ask the scheduler for another job at the same time.
   Default: 5.0
 
+max_keep_alive_idle_duration
+  .. versionadded:: 2.8.4
+
+  Maximum duration to keep worker alive while in idle state.
+  Default: 0 (Indefinitely)
+
 max_reschedules
   Maximum number of times to reschedule a failed task.
   Default: 1
@@ -269,6 +366,12 @@ check_unfulfilled_deps
   e.g. when the ``exists()`` calls of the dependencies' outputs are
   resource-intensive.
   Defaults to true.
+
+force_multiprocessing
+  By default, luigi uses multiprocessing when *more than one* worker process is
+  requested. Whet set to true, multiprocessing is used independent of the
+  the number of workers.
+  Defaults to false.
 
 
 [elasticsearch]
@@ -572,7 +675,7 @@ is good practice to do so when you have a fixed set of resources.
 .. _retcode-config:
 
 [retcode]
-----------
+---------
 
 Configure return codes for the Luigi binary. In the case of multiple return
 codes that could apply, for example a failing task and missing data, the
@@ -715,6 +818,21 @@ worker_disconnect_delay
   Number of seconds to wait after a worker has stopped pinging the
   scheduler before removing it and marking all of its running tasks as
   failed. Defaults to 60.
+
+pause_enabled
+  If false, disables pause/unpause operations and hides the pause toggle from
+  the visualiser.
+
+send_messages
+  When true, the scheduler is allowed to send messages to running tasks and
+  the central scheduler provides a simple prompt per task to send messages.
+  Defaults to true.
+
+metrics_collector
+  Optional setting allowing Luigi to use a contribution to collect metrics
+  about the pipeline to a third-party. By default this uses the default metric
+  collector that acts as a shell and does nothing. The only currently available
+  option is "datadog".
 
 
 [sendgrid]
@@ -878,11 +996,39 @@ summary-length
 port
   The port to use for webhdfs. The normal namenode port is probably on a
   different port from this one.
+
 user
   Perform file system operations as the specified user instead of $USER.  Since
   this parameter is not honored by any of the other hdfs clients, you should
   think twice before setting this parameter.
 
+client_type
+  The type of client to use. Default is the "insecure" client that requires no
+  authentication. The other option is the "kerberos" client that uses kerberos
+  authentication.
+
+[datadog]
+---------
+
+api_key
+  The api key found in the account settings of Datadog under the API
+  sections.
+app_key
+  The application key found in the account settings of Datadog under the API
+  sections.
+default_tags
+  Optional settings that adds the tag to all the metrics and events sent to
+  Datadog. Default value is "application:luigi".
+environment
+  Allows you to tweak multiple environment to differentiate between production,
+  staging or development metrics within Datadog. Default value is "development".
+statsd_host
+  The host that has the statsd instance to allow Datadog to send statsd metric. Default value is "localhost".
+statsd_port
+  The port on the host that allows connection to the statsd host. Defaults value is 8125.
+metric_namespace
+  Optional prefix to add to the beginning of every metric sent to Datadog.
+  Default value is "luigi".
 
 Per Task Retry-Policy
 ---------------------

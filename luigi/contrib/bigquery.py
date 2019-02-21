@@ -126,7 +126,7 @@ class BigQueryClient(object):
         if descriptor:
             self.client = discovery.build_from_document(descriptor, **authenticate_kwargs)
         else:
-            self.client = discovery.build('bigquery', 'v2', **authenticate_kwargs)
+            self.client = discovery.build('bigquery', 'v2', cache_discovery=False, **authenticate_kwargs)
 
     def dataset_exists(self, dataset):
         """Returns whether the given dataset exists.
@@ -174,7 +174,7 @@ class BigQueryClient(object):
 
         return True
 
-    def make_dataset(self, dataset, raise_if_exists=False, body={}):
+    def make_dataset(self, dataset, raise_if_exists=False, body=None):
         """Creates a new dataset with the default permissions.
 
            :param dataset:
@@ -183,8 +183,16 @@ class BigQueryClient(object):
            :raises luigi.target.FileAlreadyExists: if raise_if_exists=True and the dataset exists
         """
 
+        if body is None:
+            body = {}
+
         try:
-            body['id'] = '{}:{}'.format(dataset.project_id, dataset.dataset_id)
+            # Construct a message body in the format required by
+            # https://developers.google.com/resources/api-libraries/documentation/bigquery/v2/python/latest/bigquery_v2.datasets.html#insert
+            body['datasetReference'] = {
+                'projectId': dataset.project_id,
+                'datasetId': dataset.dataset_id
+            }
             if dataset.location is not None:
                 body['location'] = dataset.location
             self.client.datasets().insert(projectId=dataset.project_id, body=body).execute()
@@ -417,14 +425,13 @@ class MixinBigQueryBulkComplete(object):
 
     @classmethod
     def bulk_complete(cls, parameter_tuples):
-        if len(parameter_tuples) < 1:
-            return
-
         # Instantiate the tasks to inspect them
         tasks_with_params = [(cls(p), p) for p in parameter_tuples]
+        if not tasks_with_params:
+            return
 
         # Grab the set of BigQuery datasets we are interested in
-        datasets = set([t.output().table.dataset for t, p in tasks_with_params])
+        datasets = {t.output().table.dataset for t, p in tasks_with_params}
         logger.info('Checking datasets %s for available tables', datasets)
 
         # Query the available tables for all datasets
@@ -441,7 +448,6 @@ class MixinBigQueryBulkComplete(object):
 
 class BigQueryLoadTask(MixinBigQueryBulkComplete, luigi.Task):
     """Load data into BigQuery from GCS."""
-
     @property
     def source_format(self):
         """The source format to use (see :py:class:`SourceFormat`)."""
@@ -463,7 +469,7 @@ class BigQueryLoadTask(MixinBigQueryBulkComplete, luigi.Task):
     def schema(self):
         """Schema in the format defined at https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.load.schema.
 
-        If the value is falsy, it is omitted and inferred by BigQuery, which only works for AVRO and CSV inputs."""
+        If the value is falsy, it is omitted and inferred by BigQuery."""
         return []
 
     @property
@@ -553,6 +559,8 @@ class BigQueryLoadTask(MixinBigQueryBulkComplete, luigi.Task):
 
         if self.schema:
             job['configuration']['load']['schema'] = {'fields': self.schema}
+        else:
+            job['configuration']['load']['autodetect'] = True
 
         bq_client.run_job(output.table.project_id, job, dataset=output.table.dataset)
 

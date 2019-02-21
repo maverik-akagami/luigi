@@ -133,8 +133,8 @@ class ECSTask(luigi.Task):
 
     """
 
-    task_def_arn = luigi.Parameter(default=None)
-    task_def = luigi.Parameter(default=None)
+    task_def_arn = luigi.OptionalParameter(default=None)
+    task_def = luigi.OptionalParameter(default=None)
     cluster = luigi.Parameter(default='default')
 
     @property
@@ -182,6 +182,11 @@ class ECSTask(luigi.Task):
         response = client.run_task(taskDefinition=self.task_def_arn,
                                    overrides=overrides,
                                    cluster=self.cluster)
+
+        if response['failures']:
+            raise Exception(", ".join(["fail to run task {0} reason: {1}".format(failure['arn'], failure['reason'])
+                                       for failure in response['failures']]))
+
         self._task_ids = [task['taskArn'] for task in response['tasks']]
 
         # Wait on task completion
